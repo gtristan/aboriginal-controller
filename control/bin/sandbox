@@ -1,0 +1,295 @@
+#!/bin/bash
+
+SB_EXECS="toybox busybox bash make"
+SB_BASE=
+SB_VERBOSE=
+SB_DYNAMIC_LINKER="/tools/usr/lib/ld-musl.so.0"
+SB_TOPDIR="/tools/usr"
+SB_COMMAND=
+SB_EXITSTATUS=0
+
+# Directories to create in the sandbox
+SB_BASEDIRS="
+    proc
+    sys
+    dev
+    tmp
+    bin
+    sbin
+    home
+    tools
+    usr/bin
+    usr/sbin
+"
+
+# Array of bind mounts (source and dest)
+SB_BIND_MOUNT_SRC=("/proc" "/sys" "/dev" "/usr/overlay")
+SB_BIND_MOUNT_DEST=("/proc" "/sys" "/dev" "/tools")
+
+#####################################################
+#          Usage and command line parsing           #
+#####################################################
+function usage () {
+    echo "Usage: "
+    echo "  sandbox [OPTIONS] <command>"
+    echo
+    echo "Creates and runs sandbox at the specified staging directory"
+    echo
+    echo "Runs the command inside the chroot if any was specified, otherwise"
+    echo "will just run a shell inside the chroot."
+    echo
+    echo "If successfull in launching the chroot, this script will propagate the"
+    echo "exit status of chroot. Otherwise, if an error occurs while setting up"
+    echo "the sandbox this script will exit with error code 1."
+    echo
+    echo "General Options:"
+    echo "  -h --help                      Display this help message and exit"
+    echo "  -d --directory      <path>     Directory to run the sandbox in"
+    echo "  -v --verbose                   Be verbose"
+    echo
+    echo "Compiler control options:"
+    echo "  -l --dynamic-linker <path>     Path to the dynamic linker (ld.so)"
+    echo "  -t --topdir         <path>     Base directory for base include/link paths"
+    echo
+}
+
+while : ; do
+    case "$1" in 
+	-h|--help)
+	    usage;
+	    exit 0;
+	    shift ;;
+
+	-l|--dynamic-linker)
+	    SB_DYNAMIC_LINKER=${2};
+	    shift 2 ;;
+
+	-t|--topdir)
+	    SB_TOPDIR=${2};
+	    shift 2 ;;
+
+	-d|--directory)
+	    SB_BASE=${2};
+	    shift 2 ;;
+
+	-v|--verbose)
+	    SB_VERBOSE=1;
+	    shift ;;
+
+	*)
+	    break ;;
+    esac
+done
+
+SB_COMMAND="$@"
+
+#
+# Assert the base directory
+#
+if [ -z "${SB_BASE}" ]; then
+    echo "Must specify a base directory"
+    echo
+    usage
+    exit 1
+elif [ ! -d "${SB_BASE}" ]; then
+    echo "Base directory '${SB_BASE}' is not a directory"
+    echo
+    usage
+    exit 1
+fi
+
+#
+# Assert the executables
+#
+for executable in ${SB_EXECS}; do
+    if [ ! -x $(which ${executable}) ]; then
+	echo "No executable '${executable}' found"
+	echo
+	usage
+	exit 1
+    fi
+done
+
+#####################################################
+#                    Utilities                      #
+#####################################################
+function print_verbose() {
+    if [ ! -z "${SB_VERBOSE}" ]; then
+	echo $@;
+    fi
+}
+
+function dienow() {
+    local message=$1
+
+    if [ ! -z "${message}" ]; then
+	echo -n "${message}"
+    else
+	echo -n "An error occurred"
+    fi
+
+    echo "... exiting"
+    exit 1
+}
+
+function link_if_needed() {
+    local target=$1
+    local link_name=$2
+
+    if [ ! -e ${link_name} ] && [ ! -L ${link_name} ]; then
+	print_verbose "Installing '${link_name}'"
+
+	ln -s ${target} ${link_name}
+	if [ "$?" -ne "0" ]; then
+	    dienow "Error installing ${link_name}"
+	fi
+    else
+	print_verbose "Not installing '${link_name}', already exists"
+    fi
+}
+
+function copy_if_needed() {
+    local src=$1
+    local target=$2
+
+    if [ ! -e ${target} ]; then
+	print_verbose "Installing '${target}'"
+
+	cp ${src} ${target}
+	if [ "$?" -ne "0" ]; then
+	    dienow "Error installing ${target}"
+	fi
+    else
+	print_verbose "Not installing '${target}', already exists"
+    fi
+}
+
+function inlist() {
+    local word=$1
+    local list=$2
+
+    for iter in ${list}; do
+	if [ "$iter" == "$word" ]; then
+	    echo "yes"
+	    return
+	fi
+    done
+
+    echo "no"
+}
+
+function createDirectories() {
+    for dir in ${SB_BASEDIRS}; do
+	print_verbose "Creating ${dir}"
+	mkdir -p ${SB_BASE}/${dir}
+    done
+}
+
+function installExecs() {
+    for executable in ${SB_EXECS}; do
+	copy_if_needed $(which ${executable}) ${SB_BASE}/bin/$(basename ${executable})
+    done
+
+    # Symlink /bin/sh to /bin/bash
+    link_if_needed /bin/bash ${SB_BASE}/bin/sh
+}
+
+function setupToybox() {
+
+    # Install toybox programs as symlinks
+    local SB_TOYBOX=$(which toybox)
+    local SB_TOYBOX_PROGS=$( ${SB_TOYBOX} --long )
+    for toy in ${SB_TOYBOX_PROGS}; do
+	link_if_needed /bin/toybox ${SB_BASE}/${toy}
+    done
+
+    # Install busybox programs as symlinks, where toybox has not
+    local SB_BUSYBOX=$(which busybox)
+    local SB_BUSYBOX_PROGS=$( ${SB_BUSYBOX} --list )
+    SB_TOYBOX_PROGS=$( ${SB_TOYBOX} )
+
+    for prog in ${SB_BUSYBOX_PROGS}; do
+
+	# Toybox installs things in smart places, here we
+	# only want to install busybox programs if they
+	# are not in the list of installed toybox programs.
+	#
+	if test $(inlist "${prog}" "${SB_TOYBOX_PROGS}") == "no"; then
+	    link_if_needed /bin/busybox ${SB_BASE}/bin/${prog}
+	fi
+    done
+}
+
+function mountDirectories() {
+    local i=0;
+    
+    for mountsrc in ${SB_BIND_MOUNT_SRC[@]}; do
+	mountdest=${SB_BIND_MOUNT_DEST[i]};
+
+	print_verbose "Mounting ${mountsrc} at ${SB_BASE}/${mountdest}"
+	mount --bind ${mountsrc} ${SB_BASE}/${mountdest}
+
+	let i=i+1;
+    done
+}
+
+function umountDirectories() {
+    for mountdest in ${SB_BIND_MOUNT_DEST[@]}; do
+
+	print_verbose "Unmounting ${SB_BASE}/${mountdest}"
+	umount ${SB_BASE}/${mountdest}
+    done
+}
+
+function launchChroot() {
+    #
+    # This is for building host tools... we'll need a different config
+    # once glibc is built and we want to link to it
+    #
+    PATH=/tools/usr/distcc:/tools/usr/bin:/usr/bin:/usr/sbin:/bin:/sbin \
+	CCWRAP_DYNAMIC_LINKER=${SB_DYNAMIC_LINKER} \
+	CCWRAP_TOPDIR=${SB_TOPDIR} \
+	chroot ${SB_BASE} ${SB_COMMAND}
+
+    # Capture the chroot exit status
+    SB_EXITSTATUS=$?
+}
+
+#####################################################
+#                      Main                         #
+#####################################################
+
+#
+# Setup base directories
+#
+createDirectories
+
+#
+# Install statically linked executables
+#
+installExecs
+
+#
+# Install toybox/busybox programs as symlinks
+#
+setupToybox
+
+#
+# Bind mount some directories
+#
+mountDirectories
+
+#
+# Launch the chroot
+#
+launchChroot
+
+#
+# Unmount bind mounted directories
+#
+umountDirectories
+
+#
+# Propagate the exit status
+#
+exit ${SB_EXITSTATUS}
