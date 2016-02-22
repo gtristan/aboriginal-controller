@@ -37,6 +37,7 @@ if [ -z "$STAGING" ]; then
   exit 1;
 fi
 
+SWAPFILE=/home/swapfile.swp
 SANDBOX=/mnt/bin/sandbox
 SANDBOX_PATH=/home/${STAGING}
 SANDBOX_ARGS=""
@@ -50,6 +51,15 @@ if [ ! -z "$TOPDIR" ]; then
 fi
 
 SANDBOX_ARGS="$SANDBOX_ARGS --directory $SANDBOX_PATH"
+
+# Ensure 1GB swap, our 256MB is not enough to link stuff
+#
+if [ ! -f ${SWAPFILE} ]; then
+  dd if=/dev/zero of=${SWAPFILE} bs=1024 count=1048576
+  mkswap ${SWAPFILE}
+fi
+
+swapon ${SWAPFILE}
 
 # Run the sandbox
 $SANDBOX $SANDBOX_ARGS $COMMAND
