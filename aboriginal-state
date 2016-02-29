@@ -1,0 +1,19 @@
+#
+#
+WORKDIR=$(realpath ${SB_WORKDIR})
+PID_FILE=${WORKDIR}/aboriginal.pid
+SOCKET_FILE=${WORKDIR}/comm0
+IMAGE_FILE=${WORKDIR}/hdb.img
+
+function isRunning() {
+    if [ -f ${PID_FILE} ]; then
+      PID=$(cat ${PID_FILE})
+      kill -0 $PID > /dev/null 2>&1
+
+      if [ "$?" -eq "0" ]; then
+	echo "1";
+	return;
+      fi
+    fi
+    echo "0";
+}
