@@ -1,0 +1,192 @@
+#!/bin/bash
+
+SB_DIRECTORY=
+SB_EMULATOR=
+SB_LOGFILE="/dev/null"
+SB_INTERACTIVE=false
+SB_WORKDIR=
+
+#####################################################
+#          Usage and command line parsing           #
+#####################################################
+function usage () {
+    echo "Usage: "
+    echo "  aboriginal-start [OPTIONS]"
+    echo
+    echo "Starts the emulator so that it's ready to receive build commands"
+    echo
+    echo "General Options:"
+    echo "  -h --help                       Display this help message and exit"
+    echo "  -e --emulator       <path>      Directory of the aboriginal system image"
+    echo "  -d --directory      <directory> Directory to share with the aboriginal emulator"
+    echo "  -w --workdir        <directory> Directory to keep some state"
+    echo "  -i --interactive                Run an interactive shell instead of launching the interpretor"
+    echo "  -l --logfile        <filename>  File to log the system output to, default is /dev/null"
+    echo
+}
+
+while : ; do
+    case "$1" in 
+	-h|--help)
+	    usage;
+	    exit 0;
+	    shift ;;
+
+	-d|--directory)
+	    SB_DIRECTORY=${2};
+	    shift 2 ;;
+
+	-w|--workdir)
+	    SB_WORKDIR=${2};
+	    shift 2 ;;
+
+	-e|--emulator)
+	    SB_EMULATOR=${2};
+	    shift 2 ;;
+
+	-l|--logfile)
+	    SB_LOGFILE=${2};
+	    shift 2 ;;
+
+	-i|--interactive)
+	    SB_INTERACTIVE=true;
+	    shift ;;
+
+	*)
+	    break ;;
+    esac
+done
+
+
+#####################################################
+#                 Sanity Checking                   #
+#####################################################
+if [ ! -f ${CONTROL_IMAGE} ]; then
+  echo "Control image could not be found at '${CONTROL_IMAGE}'"
+  exit 1;
+fi
+
+if [ -z "${SB_DIRECTORY}" ]; then
+  echo "Must specify the directory to share with the emulator"
+  echo
+  usage
+  exit 1;
+elif [ ! -d ${SB_DIRECTORY} ]; then
+  echo "The specified share directory '${SB_DIRECTORY}' is not a directory"
+  echo
+  usage
+  exit 1;
+fi
+
+if [ -z "${SB_WORKDIR}" ]; then
+  echo "Must specify the directory to store sandbox running state"
+  echo
+  usage
+  exit 1;
+elif [ ! -d ${SB_WORKDIR} ]; then
+  mkdir -p ${SB_WORKDIR};
+  if [ "$?" -ne "0" ]; then
+    echo "Failed to create workdir at '${SB_WORKDIR}'"
+    exit 1;
+  fi
+fi
+
+if [ -z "${SB_EMULATOR}" ]; then
+  echo "Must specify the aboriginal emulator directory"
+  echo
+  usage
+  exit 1;
+elif [ ! -d ${SB_EMULATOR} ]; then
+  echo "The specified emulator '${SB_EMULATOR}' is not a directory"
+  echo
+  usage
+  exit 1;
+fi
+
+# Source the common protocol definition and work directory state
+#
+SB_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. ${SB_PATH}/control/bin/protocol
+. ${SB_PATH}/aboriginal-state
+
+#####################################################
+#                    Utilities                      #
+#####################################################
+function waitReady() {
+    local tries=0
+    local ready=false
+    local readAck="z"
+
+    # Give qemu a second to create the socket
+    sleep 1
+
+    # Here we give it a VERY LONG TIME to come up and be ready,
+    # this is because when starting a work directory for the first
+    # time it must create a 1GB swap file which takes some time in
+    # the emulator to do.
+    #
+    while [ "${tries}" -lt 100 ]; do
+      readAck=$(socat -T5 ${SOCKET_FILE},readbytes=1 -)
+
+      if [ "${readAck}" == "${SB_PROTO_READY}" ]; then
+	ready=true;
+	break;
+      fi
+
+      let tries=${tries}+1;
+    done
+
+    if ! $ready; then
+      echo "Unable to ready ready byte from aboriginal sandbox"
+      exit 1;
+    fi
+}
+
+#####################################################
+#                      Main                         #
+#####################################################
+CONTROL_IMAGE="$SB_PATH/control.sqf"
+
+HDB=${IMAGE_FILE}
+HDC=$(realpath ${CONTROL_IMAGE})
+EMULATOR_DIR=$(realpath ${SB_EMULATOR})
+BUILD_PAUSE=0
+
+# Setup virtfs sharing
+#
+SHARE_DIR=$(realpath ${SB_DIRECTORY})
+QEMU_EXTRA="-virtfs local,path=${SHARE_DIR},security_model=none,mount_tag=share"
+
+# Setup virtio serial device
+#
+QEMU_EXTRA=$QEMU_EXTRA" -device virtio-serial "
+QEMU_EXTRA=$QEMU_EXTRA" -chardev socket,path=${SOCKET_FILE},server,nowait,id=comm0"
+QEMU_EXTRA=$QEMU_EXTRA" -device virtconsole,chardev=comm0"
+
+# Check if we're already running
+#
+if [ "$(isRunning)" == "1" ]; then
+  echo "Aboriginal sandbox for work directory ${SB_WORKDIR} is already running at pid $(cat ${PID_FILE})";
+  exit 0;
+fi
+
+#
+# Run the emulator through aboriginal's dev-environment script
+#
+export HDB HDC QEMU_EXTRA BUILD_PAUSE
+cd ${EMULATOR_DIR}
+
+if $SB_INTERACTIVE; then
+  export KERNEL_EXTRA="INTERACTIVE=1"
+  ./dev-environment.sh
+else
+  export NOCONSOLE="1"
+  ./dev-environment.sh > ${SB_LOGFILE} 2>&1 &
+  ABORIGINAL_PID=$!
+
+  # Wait for the emulator to come up
+  waitReady
+
+  echo "Sandbox is running at PID ${ABORIGINAL_PID}, ready for commands"
+  echo ${ABORIGINAL_PID} > ${PID_FILE}
+fi
