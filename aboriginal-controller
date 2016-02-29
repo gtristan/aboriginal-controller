@@ -1,0 +1,196 @@
+#!/bin/bash
+
+SB_WORKDIR=
+SB_VERBOSE=false
+SB_QUIT=false
+SB_EXECUTE=false
+SB_BOOTSTRAP=false
+SB_DIRECTORY=
+SB_COMMAND=
+SB_EXITSTATUS=0
+
+#####################################################
+#          Usage and command line parsing           #
+#####################################################
+function usage () {
+    echo "Usage: "
+    echo "  aboriginal-controller [OPTIONS] [<commands>]"
+    echo
+    echo "Control script to interact with a running aboriginal emulator"
+    echo
+    echo "General Options:"
+    echo "  -h --help                Display this help message and exit"
+    echo "  -w --workdir <directory> Directory where emulator state is stored"
+    echo "  -v --verbose             Be verbose"
+    echo
+    echo "Main control options:"
+    echo "  -x --execute             Executes some <commands> in a sandboxed directory, this script will"
+    echo "                           block while the command is processed and the exit status of the"
+    echo "                           processed command will be propagated as the exit status of this script."
+    echo "  -q --quit                Instructs the emulator to shutdown."
+    echo
+    echo "Additional options to use with --execute"
+    echo "  -d --directory  <path>   Directory to run the sandbox in, relative to the directory shared with the emulator."
+    echo "  -b --bootstrap           Whether the sandbox should be run in bootstrap mode, bootstrap"
+    echo "                           mode indicates that there is no base libc or gcc runtime libraries"
+    echo "                           staged in the sandbox directory and that the compiler should use"
+    echo "                           the default aboriginal runtimes."
+    echo
+}
+
+while : ; do
+    case "$1" in
+	-h|--help)
+	    usage;
+	    exit 0;
+	    shift ;;
+
+	-w|--workdir)
+	    SB_WORKDIR=${2};
+	    shift 2 ;;
+
+	-v|--verbose)
+	    SB_VERBOSE=true;
+	    shift ;;
+
+	-x|--execute)
+	    SB_EXECUTE=true;
+	    shift ;;
+
+	-q|--quit)
+	    SB_QUIT=true;
+	    shift ;;
+
+	-d|--directory)
+	    SB_DIRECTORY=${2};
+	    shift 2 ;;
+
+	-b|--bootstrap)
+	    SB_BOOTSTRAP=true;
+	    shift ;;
+
+	*)
+	    break ;;
+    esac
+done
+
+SB_COMMAND=("$@")
+
+#####################################################
+#                   Utilities                       #
+#####################################################
+function printVerbose() {
+    if $SB_VERBOSE; then
+	echo $@;
+    fi
+}
+
+function sendAndWait() {
+    local sendData="$@"
+    local readAck="z"
+
+    printVerbose "Sending: ${sendData}"
+    echo ${sendData} | socat ${SOCKET_FILE},nonblock=0 -
+    readAck=$(socat -T5 ${SOCKET_FILE},readbytes=1 -)
+
+    if [ "${readAck}" != "${SB_PROTO_ACK}" ]; then
+      echo "Error sending data to client: ${sendData}"
+      exit 1;
+    fi
+}
+
+function handshake() {
+    local tries=0
+    local shook=false
+    local readAck="z"
+
+    printVerbose "Performing handshake"
+
+    while [ "${tries}" -lt 3 ]; do
+	echo ${SB_PROTO_HANDSHAKE} | socat ${SOCKET_FILE},nonblock=0 -
+	readAck=$(socat -T5 ${SOCKET_FILE},readbytes=1 -)
+	if [ "${readAck}" == "${SB_PROTO_ACK}" ]; then
+	  shook=true;
+	  break;
+	fi
+
+	let tries=${tries}+1;
+    done
+
+    if ! $shook; then
+      echo "Unable to perform handshake"
+      exit 1
+    else
+	printVerbose "Successful handshake after ${tries} tries"
+    fi
+}
+
+#####################################################
+#                     Main                          #
+#####################################################
+if ! $SB_QUIT && ! $SB_EXECUTE; then
+  echo "Must specify either the --quit or --execute options"
+  echo
+  usage
+  exit 1;
+fi
+
+if [ -z "${SB_WORKDIR}" ]; then
+  echo "Must specify the directory where runtime state is stored"
+  echo
+  usage
+  exit 1;
+elif [ ! -d ${SB_WORKDIR} ]; then
+  echo "The specified work directory '${SB_WORKDIR}' is not a directory"
+  echo
+  usage
+  exit 1;
+fi
+
+# Source the common protocol definition and work directory state
+#
+SB_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. ${SB_PATH}/control/bin/protocol
+. ${SB_PATH}/aboriginal-state
+
+
+# Check if we're running
+#
+if [ "$(isRunning)" == "0" ]; then
+  echo "Aboriginal sandbox for work directory ${SB_WORKDIR} is not running";
+  exit 1;
+fi
+
+# First perform a handshake, try a few times to get an
+# ACK back from the emulator, this usually fails on the
+# first try after launching the emulator or when the emulator
+# has been sleeping for a while
+handshake
+
+if $SB_QUIT; then
+  printVerbose "Instructing the emulator to quit"
+
+  sendAndWait ${SB_PROTO_START}
+  sendAndWait ${SB_PROTO_EXIT}
+  sendAndWait ${SB_PROTO_END}
+
+  # Currently no way to join the emulator process and wait,
+  # just return immediately and expect the emulator to exit
+  exit 0
+else
+  printVerbose "Sending commands to the emulator"
+
+  sendAndWait ${SB_PROTO_START}
+  sendAndWait ${SB_PROTO_SANDBOX} "${SB_DIRECTORY}"
+  sendAndWait ${SB_PROTO_COMMAND} "${SB_COMMAND[@]}"
+  if $SB_BOOTSTRAP; then
+    echo ${SB_PROTO_BOOTSTRAP}
+  fi
+  sendAndWait ${SB_PROTO_END}
+
+  printVerbose "Waiting for commands to complete"
+  SB_EXITSTATUS=$(socat ${SOCKET_FILE},readbytes=1 -)
+
+  printVerbose "Emulator reported exit status: ${SB_EXITSTATUS}"
+  exit ${SB_EXITSTATUS}
+fi
