@@ -1,0 +1,89 @@
+#
+# This file defines a very simplistic protocol
+# for communicating with the aboriginal sandbox.
+#
+
+#
+# Message start, if more than one start is received
+# before message end then the original message is discarded
+#
+SB_PROTO_START="START"
+
+#
+# Message end, commands are executed in the aboriginal
+# emulator only after the message end is received, then
+# a reply is written back.
+#
+SB_PROTO_END="END"
+
+#
+# An ACK byte to be read back on the host after every
+# line is sent to the emulator. This is purely for
+# synchronization purposes.
+#
+SB_PROTO_ACK="a"
+
+#
+# Indicates that we are up and ready for processing,
+# this is sent from the emulator directly after booting up
+#
+SB_PROTO_READY="r"
+
+#
+# A handshake phrase, we perform a handshake before
+# launching any commands because this crappy IPC
+# is a little shakey, once we get by the handshake
+# all is well.
+#
+SB_PROTO_HANDSHAKE="HANDSHAKE"
+
+#
+# Exit command
+#
+# Instructs the server to quit, relinquishing control
+# to the aboriginal init script, which should simply
+# return at this point causing the emulator to shut down.
+#
+# SEQUENCE:
+#
+#   START
+#   EXIT
+#   END
+#
+SB_PROTO_EXIT="EXIT"
+
+#
+# Sandbox command
+#
+# Specifies the sandbox directory as the first line in the sequence.
+#
+# SEQUENCE:
+#
+#   START
+#   SANDBOX <directory>
+#   BOOTSTRAP
+#   ENV FOO=bar BAR="baz" BAZ=3
+#   COMMAND <command>
+#   END
+#
+# Description of parameters in the message:
+#
+#   SANDBOX <directory>
+#
+#     The directory is a path relative to the shared directory which the
+#     aboriginal emulator was launched with.
+#
+#   BOOTSTRAP
+#
+#     This is an optional parameter, if specified then the aboriginal
+#     native runtime C/C++ libraries and header files will be used by
+#     the compiler. Otherwise the compiler expects to find the runtime
+#     linker at /lib/ld.so and header files staged in /usr/include
+#
+#   COMMAND <command>
+#
+#     Specifies the command to run in the sandbox
+#
+SB_PROTO_SANDBOX="SANDBOX"
+SB_PROTO_BOOTSTRAP="BOOTSTRAP"
+SB_PROTO_COMMAND="COMMAND"
