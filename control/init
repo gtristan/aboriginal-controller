@@ -1,56 +1,9 @@
 #!/bin/bash
 
-# Parameters of this script are to be specified via KERNEL_EXTRA when
-# launching the qemu environment.
-#
-#   o STAGING - Staging area absolute path
-#
-#     This path should be specified relative to the mounted HDB image,
-#     the fact that the HDB image is mounted at /home is an implementation
-#     detail, we will prepend /home to this path ourselves.
-#
-#   o DYNAMIC_LINKER - The staging area relative path to the dynamic linker
-#
-#     For the initial bootstrapping stages before glibc is built, this need
-#     not be specified. Once glibc and the gcc runtime libs are built then
-#     this needs to be specified so that linking is performed on the target
-#     libc instead of the built-in compiler's libc.
-#
-#   o TOPDIR - The staging area relative path to compiler components
-#
-#     Toplevel compiler directory, aboriginal's compiler wrapper expects
-#     to find the standard libraries and compiler runtime libraries as
-#     well as the standard C/C++ header files in specific directories
-#     relative to this top directory.
-#
-#     While bootstrapping the target libc and compiler runtimes, TOPDIR
-#     as well as DYNAMIC_LINKER can be left out.
-#
-#   o COMMAND - The command to run in the sandbox
-#
-#     If COMMAND is not specified then an interactive shell will
-#     be run inside the sandbox
-#
-
-if [ -z "$STAGING" ]; then
-  echo "Required parameter STAGING was not specified, exiting"
-  exit 1;
-fi
-
 SWAPFILE=/home/swapfile.swp
 SANDBOX=/mnt/bin/sandbox
-SANDBOX_PATH=/home/${STAGING}
-SANDBOX_ARGS=""
-
-if [ ! -z "$DYNAMIC_LINKER" ]; then
-  SANDBOX_ARGS="$SANDBOX_ARGS --dynamic-linker $DYNAMIC_LINKER"
-fi
-
-if [ ! -z "$TOPDIR" ]; then
-  SANDBOX_ARGS="$SANDBOX_ARGS --topdir $TOPDIR"
-fi
-
-SANDBOX_ARGS="$SANDBOX_ARGS --directory $SANDBOX_PATH"
+INTERPRETOR=/mnt/bin/interpretor
+SHARE=/home/build
 
 # Ensure 1GB swap, our 256MB is not enough to link stuff
 #
@@ -61,8 +14,19 @@ fi
 
 swapon ${SWAPFILE}
 
-# Run the sandbox
-$SANDBOX $SANDBOX_ARGS $COMMAND
+# Mount the share
+if [ ! -d ${SHARE} ]; then
+  mkdir ${SHARE}
+fi
+mount -t 9p share ${SHARE}
 
-# Save the exit status of the sandbox invocation
-echo "$?" > ${SANDBOX_PATH}/exit_status
+if [ -z "$INTERACTIVE" ]; then
+  # Run the interpretor
+  echo "Running the interpretor"
+  export SHARE
+  ${INTERPRETOR}
+else
+  # Run an interactive shell
+  echo "Running interactive shell"
+  ${SHELL} -i
+fi
