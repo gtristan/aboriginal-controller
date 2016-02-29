@@ -1,0 +1,135 @@
+#!/bin/bash
+#
+# Interprets commands over the serial ports
+#
+BASE=/mnt
+SANDBOX=${BASE}/bin/sandbox
+SERIAL_PORT="/dev/hvc0"
+
+# Source the protocol definition
+. ${BASE}/bin/protocol
+
+#
+# Parsing state
+#
+parse_processing=false
+parse_command=
+
+#
+# Parsed sandbox command
+#
+sb_command=
+sb_bootstrap=false
+sb_sandbox=
+
+function clearState() {
+    parse_processing=false
+    parse_command=
+    
+    sb_command=
+    sb_sandbox=
+    sb_bootstrap=false
+    sb_end_reached=false
+}
+
+function readMessage() {
+
+    while read -r word arg < ${SERIAL_PORT}; do
+	# Hmmm, for some reason we dont get more than
+	# one or two lines from the serial port at a
+	# time unless we we pause between each line on
+	# the host side... Probably I just dont understand
+	# serial ports well enough
+	#
+	echo "Read: ${word} ${arg}";
+
+	case ${word} in
+
+	    ${SB_PROTO_START})
+		if $parse_processing; then
+		  clearState;
+		fi
+		parse_processing=true;
+		;;
+
+	    ${SB_PROTO_END})
+		sb_end_reached=true;
+		;;
+
+	    ${SB_PROTO_EXIT})
+		parse_command=${SB_PROTO_EXIT};
+		;;
+
+	    ${SB_PROTO_SANDBOX})
+		parse_command=${SB_PROTO_SANDBOX};
+		sb_sandbox=${arg}
+		;;
+
+	    ${SB_PROTO_BOOTSTRAP})
+		sb_bootstrap=true;
+		;;
+
+	    ${SB_PROTO_COMMAND})
+		sb_command=("${arg}");
+		;;
+
+	esac
+
+	# Synchronize communications with an ACK for every line
+	#
+	echo "Writing back ACK to ${SERIAL_PORT}"
+	echo "${SB_PROTO_ACK}" > ${SERIAL_PORT}
+
+	# Break the loop once we receive an "END", after
+	# writing the ACK back to the host.
+	#
+	if $sb_end_reached; then
+	  return;
+	fi
+
+    done
+}
+
+function runSandbox() {
+
+    local sb_args="";
+
+    if ! $sb_bootstrap; then
+      sb_args=${sb_args}"--dynamic-linker /lib/ld.so ";
+      sb_args=${sb_args}"--topdir /usr ";
+    fi
+
+    sb_args=${sb_args}"--directory ${SHARE}/${sb_sandbox}"
+
+    # Run the sandbox with the specified commands
+    ${SANDBOX} ${sb_args} "${sb_command[0]}"
+
+    # Report the return value to be written back to the host
+    echo "$?" > ${SERIAL_PORT}
+}
+
+function processMessage() {
+
+    case ${parse_command} in
+	${SB_PROTO_EXIT})
+	    exit 0;
+	    ;;
+	${SB_PROTO_SANDBOX})
+	    runSandbox;
+	    ;;
+    esac
+}
+
+#
+# Indicate we are ready for processing
+#
+echo ${SB_PROTO_READY} > ${SERIAL_PORT}
+
+#
+# Main parsing loop
+#
+while true; do
+    readMessage;
+    processMessage;
+    clearState;
+done
