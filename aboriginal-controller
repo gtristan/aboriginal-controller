@@ -90,11 +90,11 @@ function sendAndWait() {
     local readAck="z"
 
     printVerbose "Sending: ${sendData}"
-    echo ${sendData} | socat ${SOCKET_FILE},nonblock=0 -
-    readAck=$(socat -T5 ${SOCKET_FILE},readbytes=1 -)
+    echo ${sendData} | socat ${SOCKET_FILE_IN},nonblock=0 -
+    readAck=$(socat -T5 ${SOCKET_FILE_OUT},readbytes=1 -)
 
     if [ "${readAck}" != "${SB_PROTO_ACK}" ]; then
-      echo "Error sending data to client: ${sendData}"
+      echo "Error sending data to client: ${sendData} (read ack byte: ${readAck})"
       exit 1;
     fi
 }
@@ -107,8 +107,8 @@ function handshake() {
     printVerbose "Performing handshake"
 
     while [ "${tries}" -lt 3 ]; do
-	echo ${SB_PROTO_HANDSHAKE} | socat ${SOCKET_FILE},nonblock=0 -
-	readAck=$(socat -T5 ${SOCKET_FILE},readbytes=1 -)
+	echo ${SB_PROTO_HANDSHAKE} | socat ${SOCKET_FILE_IN},nonblock=0 -
+	readAck=$(socat -T5 ${SOCKET_FILE_OUT},readbytes=1 -)
 	if [ "${readAck}" == "${SB_PROTO_ACK}" ]; then
 	  shook=true;
 	  break;
@@ -189,7 +189,7 @@ else
   sendAndWait ${SB_PROTO_END}
 
   printVerbose "Waiting for commands to complete"
-  SB_EXITSTATUS=$(socat ${SOCKET_FILE},readbytes=1 -)
+  SB_EXITSTATUS=$(socat ${SOCKET_FILE_OUT},readbytes=1 -)
 
   printVerbose "Emulator reported exit status: ${SB_EXITSTATUS}"
   exit ${SB_EXITSTATUS}
