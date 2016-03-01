@@ -4,7 +4,8 @@
 #
 BASE=/mnt
 SANDBOX=${BASE}/bin/sandbox
-SERIAL_PORT="/dev/hvc0"
+SERIAL_PORT_IN="/dev/hvc0"
+SERIAL_PORT_OUT="/dev/hvc1"
 
 # Source the protocol definition
 . ${BASE}/bin/protocol
@@ -34,7 +35,7 @@ function clearState() {
 
 function readMessage() {
 
-    while read -r word arg < ${SERIAL_PORT}; do
+    while read -r word arg < ${SERIAL_PORT_IN}; do
 	# Hmmm, for some reason we dont get more than
 	# one or two lines from the serial port at a
 	# time unless we we pause between each line on
@@ -77,8 +78,8 @@ function readMessage() {
 
 	# Synchronize communications with an ACK for every line
 	#
-	echo "Writing back ACK to ${SERIAL_PORT}"
-	echo "${SB_PROTO_ACK}" > ${SERIAL_PORT}
+	echo "Writing back ACK to ${SERIAL_PORT_OUT}"
+	echo "${SB_PROTO_ACK}" > ${SERIAL_PORT_OUT}
 
 	# Break the loop once we receive an "END", after
 	# writing the ACK back to the host.
@@ -102,10 +103,11 @@ function runSandbox() {
     sb_args=${sb_args}"--directory ${SHARE}/${sb_sandbox}"
 
     # Run the sandbox with the specified commands
+    echo "Running: ${SANDBOX} ${sb_args} ${sb_command[0]}"
     ${SANDBOX} ${sb_args} "${sb_command[0]}"
 
     # Report the return value to be written back to the host
-    echo "$?" > ${SERIAL_PORT}
+    echo "$?" > ${SERIAL_PORT_OUT}
 }
 
 function processMessage() {
@@ -123,7 +125,7 @@ function processMessage() {
 #
 # Indicate we are ready for processing
 #
-echo ${SB_PROTO_READY} > ${SERIAL_PORT}
+echo ${SB_PROTO_READY} > ${SERIAL_PORT_OUT}
 
 #
 # Main parsing loop
