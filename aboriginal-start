@@ -126,7 +126,7 @@ function waitReady() {
     # the emulator to do.
     #
     while [ "${tries}" -lt 100 ]; do
-      readAck=$(socat -T5 ${SOCKET_FILE},readbytes=1 -)
+      readAck=$(socat -T5 ${SOCKET_FILE_OUT},readbytes=1 -)
 
       if [ "${readAck}" == "${SB_PROTO_READY}" ]; then
 	ready=true;
@@ -160,8 +160,10 @@ QEMU_EXTRA="-virtfs local,path=${SHARE_DIR},security_model=none,mount_tag=share"
 # Setup virtio serial device
 #
 QEMU_EXTRA=$QEMU_EXTRA" -device virtio-serial "
-QEMU_EXTRA=$QEMU_EXTRA" -chardev socket,path=${SOCKET_FILE},server,nowait,id=comm0"
+QEMU_EXTRA=$QEMU_EXTRA" -chardev socket,path=${SOCKET_FILE_IN},server,nowait,id=comm0"
 QEMU_EXTRA=$QEMU_EXTRA" -device virtconsole,chardev=comm0"
+QEMU_EXTRA=$QEMU_EXTRA" -chardev socket,path=${SOCKET_FILE_OUT},server,nowait,id=comm1"
+QEMU_EXTRA=$QEMU_EXTRA" -device virtconsole,chardev=comm1"
 
 # Check if we're already running
 #
