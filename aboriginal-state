@@ -1,10 +1,13 @@
-#
+# Setup some information about the state directory
+# and functions to share between the start & control script.
 #
 WORKDIR=$(realpath ${SB_WORKDIR})
 PID_FILE=${WORKDIR}/aboriginal.pid
 SOCKET_FILE_IN=${WORKDIR}/comm0
 SOCKET_FILE_OUT=${WORKDIR}/comm1
 IMAGE_FILE=${WORKDIR}/hdb.img
+DISTCC_LOG=${WORKDIR}/distccd.log
+QEMU_LOG=${WORKDIR}/qemu.log
 
 function isRunning() {
     if [ -f ${PID_FILE} ]; then
