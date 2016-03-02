@@ -2,7 +2,6 @@
 
 SB_DIRECTORY=
 SB_EMULATOR=
-SB_LOGFILE="/dev/null"
 SB_INTERACTIVE=false
 SB_WORKDIR=
 
@@ -21,7 +20,6 @@ function usage () {
     echo "  -d --directory      <directory> Directory to share with the aboriginal emulator"
     echo "  -w --workdir        <directory> Directory to keep some state"
     echo "  -i --interactive                Run an interactive shell instead of launching the interpretor"
-    echo "  -l --logfile        <filename>  File to log the system output to, default is /dev/null"
     echo
 }
 
@@ -42,10 +40,6 @@ while : ; do
 
 	-e|--emulator)
 	    SB_EMULATOR=${2};
-	    shift 2 ;;
-
-	-l|--logfile)
-	    SB_LOGFILE=${2};
 	    shift 2 ;;
 
 	-i|--interactive)
@@ -175,7 +169,7 @@ fi
 #
 # Run the emulator through aboriginal's dev-environment script
 #
-export HDB HDC QEMU_EXTRA BUILD_PAUSE
+export HDB HDC QEMU_EXTRA BUILD_PAUSE DISTCC_LOG
 cd ${EMULATOR_DIR}
 
 if $SB_INTERACTIVE; then
@@ -183,7 +177,7 @@ if $SB_INTERACTIVE; then
   ./dev-environment.sh
 else
   export NOCONSOLE="1"
-  ./dev-environment.sh > ${SB_LOGFILE} 2>&1 &
+  ./dev-environment.sh > ${QEMU_LOG} 2>&1 &
   ABORIGINAL_PID=$!
 
   # Wait for the emulator to come up
