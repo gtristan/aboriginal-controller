@@ -184,7 +184,7 @@ else
   sendAndWait ${SB_PROTO_SANDBOX} "${SB_DIRECTORY}"
   sendAndWait ${SB_PROTO_COMMAND} "${SB_COMMAND[@]}"
   if $SB_BOOTSTRAP; then
-    echo ${SB_PROTO_BOOTSTRAP}
+    sendAndWait ${SB_PROTO_BOOTSTRAP}
   fi
   sendAndWait ${SB_PROTO_END}
 
