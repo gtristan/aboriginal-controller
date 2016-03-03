@@ -4,6 +4,8 @@ SB_DIRECTORY=
 SB_EMULATOR=
 SB_INTERACTIVE=false
 SB_WORKDIR=
+SB_SILENT=false
+SB_CPUS=3
 
 #####################################################
 #          Usage and command line parsing           #
@@ -19,6 +21,8 @@ function usage () {
     echo "  -e --emulator       <path>      Directory of the aboriginal system image"
     echo "  -d --directory      <directory> Directory to share with the aboriginal emulator"
     echo "  -w --workdir        <directory> Directory to keep some state"
+    echo "  -c --cpus           <number>    Amount of distcc processes to export for the build slave"
+    echo "  -s --silent                     Run silently unless an error occurs"
     echo "  -i --interactive                Run an interactive shell instead of launching the interpretor"
     echo
 }
@@ -42,6 +46,14 @@ while : ; do
 	    SB_EMULATOR=${2};
 	    shift 2 ;;
 
+	-c|--cpus)
+	    SB_CPUS=${2};
+	    shift 2 ;;
+
+	-s|--silent)
+	    SB_SILENT=true;
+	    shift ;;
+
 	-i|--interactive)
 	    SB_INTERACTIVE=true;
 	    shift ;;
@@ -55,6 +67,14 @@ done
 #####################################################
 #                 Sanity Checking                   #
 #####################################################
+function isNumber() {
+  if [[ $1 != *[!0-9]* ]]; then
+    echo "yes"
+  else
+    echo "no"
+  fi
+}
+
 if [ ! -f ${CONTROL_IMAGE} ]; then
   echo "Control image could not be found at '${CONTROL_IMAGE}'"
   exit 1;
@@ -92,6 +112,13 @@ if [ -z "${SB_EMULATOR}" ]; then
   exit 1;
 elif [ ! -d ${SB_EMULATOR} ]; then
   echo "The specified emulator '${SB_EMULATOR}' is not a directory"
+  echo
+  usage
+  exit 1;
+fi
+
+if [ "$(isNumber ${SB_CPUS})" == "no" ]; then
+  echo "The --cpus option must be a numeric value"
   echo
   usage
   exit 1;
@@ -162,13 +189,16 @@ QEMU_EXTRA=$QEMU_EXTRA" -device virtconsole,chardev=comm1"
 # Check if we're already running
 #
 if [ "$(isRunning)" == "1" ]; then
-  echo "Aboriginal sandbox for work directory ${SB_WORKDIR} is already running at pid $(cat ${PID_FILE})";
+  if ! $SB_SILENT; then
+    echo "Aboriginal sandbox for work directory ${SB_WORKDIR} is already running at pid $(cat ${PID_FILE})";
+  fi
   exit 0;
 fi
 
 #
 # Run the emulator through aboriginal's dev-environment script
 #
+export CPUS=${SB_CPUS}
 export HDB HDC QEMU_EXTRA BUILD_PAUSE DISTCC_LOG
 cd ${EMULATOR_DIR}
 
@@ -183,6 +213,8 @@ else
   # Wait for the emulator to come up
   waitReady
 
-  echo "Sandbox is running at PID ${ABORIGINAL_PID}, ready for commands"
+  if ! $SB_SILENT; then
+    echo "Sandbox is running at PID ${ABORIGINAL_PID}, ready for commands"
+  fi
   echo ${ABORIGINAL_PID} > ${PID_FILE}
 fi
