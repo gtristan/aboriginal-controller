@@ -14,6 +14,7 @@ SB_BASEDIRS="
     sys
     dev
     tmp
+    etc
     bin
     sbin
     home
@@ -241,6 +242,30 @@ function umountDirectories() {
     done
 }
 
+function createBaseMeta() {
+
+    if [ ! -f "${SB_BASE}/etc/passwd" ]; then
+        printVerbose "Creating ${SB_BASE}/etc/passwd"
+	cat > "${SB_BASE}/etc/passwd" << EOF
+root:x:0:0:Super user:/root:/bin/sh
+EOF
+    fi
+
+    if [ ! -f "${SB_BASE}/etc/group" ]; then
+        printVerbose "Creating ${SB_BASE}/etc/group"
+	cat > "${SB_BASE}/etc/group" << EOF
+root:x:0:root
+EOF
+    fi
+
+    if [ ! -f "${SB_BASE}/etc/shadow" ]; then
+        printVerbose "Creating ${SB_BASE}/etc/shadow"
+	cat > "${SB_BASE}/etc/shadow" << EOF
+root::::::::
+EOF
+    fi
+}
+
 function launchChroot() {
 
     printVerbose "Running command in sandbox: ${SB_COMMAND[@]}"
@@ -266,6 +291,11 @@ function launchChroot() {
 # Setup base directories
 #
 createDirectories
+
+#
+# Setup some basic medatada
+#
+createBaseMeta
 
 #
 # Install statically linked executables
