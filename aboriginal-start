@@ -176,7 +176,7 @@ BUILD_PAUSE=0
 # Setup virtfs sharing
 #
 SHARE_DIR=$(realpath ${SB_DIRECTORY})
-QEMU_EXTRA="-virtfs local,path=${SHARE_DIR},security_model=none,mount_tag=share"
+QEMU_EXTRA="-virtfs local,path=${SHARE_DIR},security_model=mapped-file,mount_tag=share"
 
 # Setup virtio serial device
 #
