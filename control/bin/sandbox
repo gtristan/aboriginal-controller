@@ -5,6 +5,7 @@ SB_BASE=
 SB_VERBOSE=
 SB_DYNAMIC_LINKER="/tools/usr/lib/ld-musl.so.0"
 SB_TOPDIR="/tools/usr"
+SB_LIBDIRS=
 SB_COMMAND=
 SB_EXITSTATUS=0
 
@@ -24,8 +25,8 @@ SB_BASEDIRS="
 "
 
 # Array of bind mounts (source and dest)
-SB_BIND_MOUNT_SRC=("/proc" "/sys" "/dev" "/usr/overlay")
-SB_BIND_MOUNT_DEST=("/proc" "/sys" "/dev" "/tools")
+SB_BIND_MOUNT_SRC=("/proc" "/sys" "/usr/overlay")
+SB_BIND_MOUNT_DEST=("/proc" "/sys" "/tools")
 
 #####################################################
 #          Usage and command line parsing           #
@@ -51,6 +52,7 @@ function usage () {
     echo "Compiler control options:"
     echo "  -l --dynamic-linker <path>     Path to the dynamic linker (ld.so)"
     echo "  -t --topdir         <path>     Base directory for base include/link paths"
+    echo "  -e --extra-libdirs  <path>     A colon separated path of default library search paths"
     echo
 }
 
@@ -67,6 +69,10 @@ while : ; do
 
 	-t|--topdir)
 	    SB_TOPDIR=${2};
+	    shift 2 ;;
+
+	-e|--extra-libdirs)
+	    SB_LIBDIRS=${2};
 	    shift 2 ;;
 
 	-d|--directory)
@@ -277,6 +283,7 @@ function launchChroot() {
     PATH=/tools/usr/distcc:/tools/usr/bin:/usr/bin:/usr/sbin:/bin:/sbin \
 	CCWRAP_DYNAMIC_LINKER=${SB_DYNAMIC_LINKER} \
 	CCWRAP_TOPDIR=${SB_TOPDIR} \
+	CCWRAP_EXTRA_LIBDIRS=${SB_LIBDIRS} \
 	chroot ${SB_BASE} /bin/bash -c "${SB_COMMAND[@]}"
 
     # Capture the chroot exit status
