@@ -280,7 +280,7 @@ function launchChroot() {
     # This is for building host tools... we'll need a different config
     # once glibc is built and we want to link to it
     #
-    PATH=/tools/usr/distcc:/tools/usr/bin:/usr/bin:/usr/sbin:/bin:/sbin \
+    PATH=/usr/bin:/bin:/usr/sbin:/sbin:/tools/usr/distcc:/tools/usr/bin \
 	CCWRAP_DYNAMIC_LINKER=${SB_DYNAMIC_LINKER} \
 	CCWRAP_TOPDIR=${SB_TOPDIR} \
 	CCWRAP_EXTRA_LIBDIRS=${SB_LIBDIRS} \
