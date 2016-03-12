@@ -4,8 +4,8 @@
 #
 BASE=/mnt
 SANDBOX=${BASE}/bin/sandbox
-SERIAL_PORT_IN="/dev/hvc0"
-SERIAL_PORT_OUT="/dev/hvc1"
+SERIAL_PORT_IN="/dev/vport1p1"
+SERIAL_PORT_OUT="/dev/vport1p2"
 
 # Source the protocol definition
 . ${BASE}/bin/protocol
@@ -103,9 +103,17 @@ function runSandbox() {
 
     sb_args=${sb_args}"--directory ${SHARE}/${sb_sandbox}"
 
+    # Mount the share for the duration of the command
+    echo "Mounting ${SHARE}"
+    mount -t 9p share ${SHARE}
+
     # Run the sandbox with the specified commands
     echo "Running: ${SANDBOX} ${sb_args} ${sb_command[0]}"
     ${SANDBOX} ${sb_args} "${sb_command[0]}"
+
+    # Umount it, only mounted while running commands
+    echo "Unmounting ${SHARE}"
+    umount ${SHARE}
 
     # Report the return value to be written back to the host
     echo "$?" > ${SERIAL_PORT_OUT}
@@ -124,9 +132,12 @@ function processMessage() {
 }
 
 #
-# Indicate we are ready for processing
+# Indicate we are ready for processing, if we're launched in
+# the background.
 #
-echo ${SB_PROTO_READY} > ${SERIAL_PORT_OUT}
+if [ ! -z "${INFORM_READY}" ]; then
+    echo ${SB_PROTO_READY} > ${SERIAL_PORT_OUT}
+fi
 
 #
 # Main parsing loop
