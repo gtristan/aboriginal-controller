@@ -18,14 +18,20 @@ swapon ${SWAPFILE}
 if [ ! -d ${SHARE} ]; then
   mkdir ${SHARE}
 fi
-mount -t 9p share ${SHARE}
 
 if [ -z "$INTERACTIVE" ]; then
   # Run the interpretor
   echo "Running the interpretor"
   export SHARE
+  export INFORM_READY=1
   ${INTERPRETOR}
 else
+
+  # Mount the share in interactive mode,
+  # normally we only mount it for a build command
+  # and then unmount
+  mount -t 9p share ${SHARE}
+
   # Run an interactive shell
   echo "Running interactive shell"
   ${SHELL} -i
