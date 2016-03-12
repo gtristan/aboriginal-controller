@@ -17,17 +17,17 @@ SB_PROTO_START="START"
 SB_PROTO_END="END"
 
 #
-# An ACK byte to be read back on the host after every
+# An ACK message to be read back on the host after every
 # line is sent to the emulator. This is purely for
 # synchronization purposes.
 #
-SB_PROTO_ACK="a"
+SB_PROTO_ACK="ACK"
 
 #
 # Indicates that we are up and ready for processing,
 # this is sent from the emulator directly after booting up
 #
-SB_PROTO_READY="r"
+SB_PROTO_READY="READY"
 
 #
 # A handshake phrase, we perform a handshake before
