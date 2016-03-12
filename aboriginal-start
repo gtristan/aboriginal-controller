@@ -75,6 +75,19 @@ function isNumber() {
   fi
 }
 
+function ensurePipe() {
+  if [ ! -p ${1} ]; then
+    mkfifo ${1}
+    if [ "$?" -ne "0" ]; then
+      echo "Failed to named pipe at '${1}'"
+      exit 1;
+    fi
+  fi
+
+  # Clear pipes at startup
+  dd if=${1} iflag=nonblock of=/dev/null
+}
+
 if [ ! -f ${CONTROL_IMAGE} ]; then
   echo "Control image could not be found at '${CONTROL_IMAGE}'"
   exit 1;
@@ -130,6 +143,18 @@ SB_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . ${SB_PATH}/control/bin/protocol
 . ${SB_PATH}/aboriginal-state
 
+
+# Early abort if we're already running
+#
+if [ "$(isRunning)" == "1" ]; then
+  if ! $SB_SILENT; then
+    echo "Aboriginal sandbox for work directory ${SB_WORKDIR} is already running at pid $(cat ${PID_FILE})";
+  fi
+  exit 0;
+fi
+
+ensurePipe ${PIPE_IN}
+ensurePipe ${PIPE_OUT}
 #####################################################
 #                    Utilities                      #
 #####################################################
@@ -138,17 +163,14 @@ function waitReady() {
     local ready=false
     local readAck="z"
 
-    # Give qemu a second to create the socket
-    sleep 1
-
     # Here we give it a VERY LONG TIME to come up and be ready,
     # this is because when starting a work directory for the first
     # time it must create a 1GB swap file which takes some time in
     # the emulator to do.
     #
     while [ "${tries}" -lt 100 ]; do
-      readAck=$(socat -T5 ${SOCKET_FILE_OUT},readbytes=1 -)
 
+      read -r readAck < ${PIPE_OUT};
       if [ "${readAck}" == "${SB_PROTO_READY}" ]; then
 	ready=true;
 	break;
@@ -181,19 +203,10 @@ QEMU_EXTRA="-virtfs local,path=${SHARE_DIR},security_model=mapped-file,mount_tag
 # Setup virtio serial device
 #
 QEMU_EXTRA=$QEMU_EXTRA" -device virtio-serial "
-QEMU_EXTRA=$QEMU_EXTRA" -chardev socket,path=${SOCKET_FILE_IN},server,nowait,id=comm0"
-QEMU_EXTRA=$QEMU_EXTRA" -device virtconsole,chardev=comm0"
-QEMU_EXTRA=$QEMU_EXTRA" -chardev socket,path=${SOCKET_FILE_OUT},server,nowait,id=comm1"
-QEMU_EXTRA=$QEMU_EXTRA" -device virtconsole,chardev=comm1"
-
-# Check if we're already running
-#
-if [ "$(isRunning)" == "1" ]; then
-  if ! $SB_SILENT; then
-    echo "Aboriginal sandbox for work directory ${SB_WORKDIR} is already running at pid $(cat ${PID_FILE})";
-  fi
-  exit 0;
-fi
+QEMU_EXTRA=$QEMU_EXTRA" -chardev pipe,path=${PIPE_IN},id=comm0"
+QEMU_EXTRA=$QEMU_EXTRA" -device virtserialport,chardev=comm0,name=serial0"
+QEMU_EXTRA=$QEMU_EXTRA" -chardev pipe,path=${PIPE_OUT},id=comm1"
+QEMU_EXTRA=$QEMU_EXTRA" -device virtserialport,chardev=comm1,name=serial1"
 
 #
 # Run the emulator through aboriginal's dev-environment script
