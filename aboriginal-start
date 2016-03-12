@@ -85,7 +85,7 @@ function ensurePipe() {
   fi
 
   # Clear pipes at startup
-  dd if=${1} iflag=nonblock of=/dev/null
+  dd if=${1} iflag=nonblock of=/dev/null > /dev/null 2>&1
 }
 
 if [ ! -f ${CONTROL_IMAGE} ]; then
