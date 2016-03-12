@@ -9,6 +9,19 @@ SB_DIRECTORY=
 SB_COMMAND=
 SB_EXITSTATUS=0
 
+# This is a timeout we wait between reading an ACK
+# and sending a message, we should not need this,
+# it possibly indicates a bug with qemu/virtio.
+SB_WAIT_SEND=0.3
+
+# Also same issue, in case that the wait is not enough
+# and we fail to get our ACK, we try the whole command
+# over again.
+SB_RETRIES=10
+
+# The command sequence we're gonna send
+SB_COMMAND_SEQUENCE=()
+
 #####################################################
 #          Usage and command line parsing           #
 #####################################################
@@ -81,7 +94,7 @@ SB_COMMAND=("$@")
 #####################################################
 function printVerbose() {
     if $SB_VERBOSE; then
-	echo $@;
+	echo $@ 1>&2;
     fi
 }
 
@@ -89,13 +102,17 @@ function sendAndWait() {
     local sendData="$@"
     local readAck="z"
 
+    sleep ${SB_WAIT_SEND}
     printVerbose "Sending: ${sendData}"
-    echo ${sendData} | socat ${SOCKET_FILE_IN},nonblock=0 -
-    readAck=$(socat -T5 ${SOCKET_FILE_OUT},readbytes=1 -)
+    echo ${sendData} > ${PIPE_IN};
+    printVerbose "Waiting for ACK"
+    read -t 5 -r readAck < ${PIPE_OUT};
+    printVerbose "Read ack: $readAck"
 
     if [ "${readAck}" != "${SB_PROTO_ACK}" ]; then
-      echo "Error sending data to client: ${sendData} (read ack byte: ${readAck})"
-      exit 1;
+	echo "1"
+    else
+	echo "0"
     fi
 }
 
@@ -107,8 +124,9 @@ function handshake() {
     printVerbose "Performing handshake"
 
     while [ "${tries}" -lt 3 ]; do
-	echo ${SB_PROTO_HANDSHAKE} | socat ${SOCKET_FILE_IN},nonblock=0 -
-	readAck=$(socat -T5 ${SOCKET_FILE_OUT},readbytes=1 -)
+	echo ${SB_PROTO_HANDSHAKE} > ${PIPE_IN};
+	sleep 0.5
+	read -t 5 -r readAck < ${PIPE_OUT};
 	if [ "${readAck}" == "${SB_PROTO_ACK}" ]; then
 	  shook=true;
 	  break;
@@ -124,6 +142,35 @@ function handshake() {
 	printVerbose "Successful handshake after ${tries} tries"
     fi
 }
+
+function sendSequence() {
+    local status=0;
+    local tries=0;
+
+    while [ "${tries}" -lt ${SB_RETRIES} ]; do
+
+	for comm in "${COMMAND_SEQUENCE[@]}"; do
+	    status=$(sendAndWait ${comm})
+
+	    if [ "${status}" != "0" ]; then
+		break
+	    fi
+	done
+
+	if [ "${status}" == "0" ]; then
+	    break
+	fi
+
+	let tries=${tries}+1;
+    done
+
+    # Finally give up
+    if [ "${status}" != "0" ]; then
+	echo "Failed to send message after ${tries} tries";
+	exit 1;
+    fi
+}
+
 
 #####################################################
 #                     Main                          #
@@ -161,18 +208,19 @@ if [ "$(isRunning)" == "0" ]; then
   exit 1;
 fi
 
-# First perform a handshake, try a few times to get an
-# ACK back from the emulator, this usually fails on the
-# first try after launching the emulator or when the emulator
-# has been sleeping for a while
+# First perform a handshake, just in case we're out of sync
+# for some unexplained reason
 handshake
+
+declare -a COMMAND_SEQUENCE
 
 if $SB_QUIT; then
   printVerbose "Instructing the emulator to quit"
 
-  sendAndWait ${SB_PROTO_START}
-  sendAndWait ${SB_PROTO_EXIT}
-  sendAndWait ${SB_PROTO_END}
+  COMMAND_SEQUENCE+=(${SB_PROTO_START})
+  COMMAND_SEQUENCE+=(${SB_PROTO_EXIT})
+  COMMAND_SEQUENCE+=(${SB_PROTO_END})
+  sendSequence
 
   # Currently no way to join the emulator process and wait,
   # just return immediately and expect the emulator to exit
@@ -180,16 +228,17 @@ if $SB_QUIT; then
 else
   printVerbose "Sending commands to the emulator"
 
-  sendAndWait ${SB_PROTO_START}
-  sendAndWait ${SB_PROTO_SANDBOX} "${SB_DIRECTORY}"
-  sendAndWait ${SB_PROTO_COMMAND} "${SB_COMMAND[@]}"
+  COMMAND_SEQUENCE+=(${SB_PROTO_START})
+  COMMAND_SEQUENCE+=("${SB_PROTO_SANDBOX} ${SB_DIRECTORY}")
+  COMMAND_SEQUENCE+=("${SB_PROTO_COMMAND} ${SB_COMMAND[@]}")
   if $SB_BOOTSTRAP; then
-    sendAndWait ${SB_PROTO_BOOTSTRAP}
+    COMMAND_SEQUENCE+=(${SB_PROTO_BOOTSTRAP})
   fi
-  sendAndWait ${SB_PROTO_END}
+  COMMAND_SEQUENCE+=(${SB_PROTO_END})
+  sendSequence
 
   printVerbose "Waiting for commands to complete"
-  SB_EXITSTATUS=$(socat ${SOCKET_FILE_OUT},readbytes=1 -)
+  read -r SB_EXITSTATUS < ${PIPE_OUT};
 
   printVerbose "Emulator reported exit status: ${SB_EXITSTATUS}"
   exit ${SB_EXITSTATUS}
