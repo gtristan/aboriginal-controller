@@ -153,8 +153,8 @@ if [ "$(isRunning)" == "1" ]; then
   exit 0;
 fi
 
-ensurePipe ${PIPE_IN}
-ensurePipe ${PIPE_OUT}
+ensurePipe ${COMM_IN}
+ensurePipe ${COMM_OUT}
 #####################################################
 #                    Utilities                      #
 #####################################################
@@ -170,7 +170,7 @@ function waitReady() {
     #
     while [ "${tries}" -lt 100 ]; do
 
-      read -r readAck < ${PIPE_OUT};
+      read -r readAck < ${COMM_IN};
       if [ "${readAck}" == "${SB_PROTO_READY}" ]; then
 	ready=true;
 	break;
@@ -203,9 +203,9 @@ QEMU_EXTRA="-virtfs local,path=${SHARE_DIR},security_model=mapped-file,mount_tag
 # Setup virtio serial device
 #
 QEMU_EXTRA=$QEMU_EXTRA" -device virtio-serial "
-QEMU_EXTRA=$QEMU_EXTRA" -chardev pipe,path=${PIPE_IN},id=comm0"
+QEMU_EXTRA=$QEMU_EXTRA" -chardev pipe,path=${COMM_OUT},id=comm0"
 QEMU_EXTRA=$QEMU_EXTRA" -device virtserialport,chardev=comm0,name=serial0"
-QEMU_EXTRA=$QEMU_EXTRA" -chardev pipe,path=${PIPE_OUT},id=comm1"
+QEMU_EXTRA=$QEMU_EXTRA" -chardev pipe,path=${COMM_IN},id=comm1"
 QEMU_EXTRA=$QEMU_EXTRA" -device virtserialport,chardev=comm1,name=serial1"
 
 #
