@@ -331,7 +331,7 @@ function launchChroot() {
 	CCWRAP_DYNAMIC_LINKER=${SB_DYNAMIC_LINKER} \
 	CCWRAP_TOPDIR=${SB_TOPDIR} \
 	CCWRAP_EXTRA_LIBDIRS=${SB_LIBDIRS} \
-	chroot ${SB_BASE} /bin/sh -c "${SB_COMMAND[@]}"
+	chroot ${SB_BASE} /bin/bash -c "${SB_COMMAND[@]}"
 
     # Capture the chroot exit status
     SB_EXITSTATUS=$?
