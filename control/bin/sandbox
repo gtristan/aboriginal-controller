@@ -1,6 +1,5 @@
 #!/bin/bash
 
-SB_EXECS="toybox busybox bash make"
 SB_BASE=
 SB_VERBOSE=
 SB_DYNAMIC_LINKER="/tools/usr/lib/ld-musl.so.0"
@@ -25,8 +24,18 @@ SB_BASEDIRS="
 "
 
 # Array of bind mounts (source and dest)
-SB_BIND_MOUNT_SRC=("/proc" "/sys" "/usr/overlay")
-SB_BIND_MOUNT_DEST=("/proc" "/sys" "/tools")
+SB_BIND_MOUNT_TMP=$(mktemp -d)
+SB_BIND_MOUNT_SRC=("${SB_BIND_MOUNT_TMP}" "/proc" "/sys" "/usr/overlay")
+SB_BIND_MOUNT_DEST=("/tmp" "/proc" "/sys" "/tools")
+
+
+# Paths when in the sandbox, we use arrays so
+# we can easily walk it before running the sandbox
+SB_BASE_PATH=("/usr/bin" "/bin" "/usr/sbin" "/sbin")
+SB_TOOL_PATH=("/tools/usr/distcc" "/tools/usr/bin")
+
+# Static execs we'll want to use in the sandbox
+SB_EXECS="toybox busybox bash make"
 
 #####################################################
 #          Usage and command line parsing           #
@@ -120,9 +129,13 @@ done
 #####################################################
 #                    Utilities                      #
 #####################################################
+function printStderr() {
+    echo "$@" 1>&2;
+}
+
 function printVerbose() {
     if [ ! -z "${SB_VERBOSE}" ]; then
-	echo $@;
+	printStderr $@
     fi
 }
 
@@ -139,11 +152,27 @@ function dienow() {
     exit 1
 }
 
+# Check if program ${1} exists in the base staging paths
+function checkExists {
+    local file=$1
+
+    for dir in "${SB_BASE_PATH[@]}"; do
+	fullpath="${SB_BASE}/${dir}/${file}"
+	if [ -e "${fullpath}" ]; then
+	    echo "yes"
+	    return
+	fi
+    done
+
+    echo "no";
+}
+
 function linkIfNeeded() {
     local target=$1
     local link_name=$2
+    local link_base=$(basename ${link_name})
 
-    if [ ! -e ${link_name} ] && [ ! -L ${link_name} ]; then
+    if [ $(checkExists ${link_base}) == "no" ]; then
 	printVerbose "Installing '${link_name}'"
 
 	ln -s ${target} ${link_name}
@@ -171,7 +200,7 @@ function copyIfNeeded() {
     fi
 }
 
-function inlist() {
+function inList() {
     local word=$1
     local list=$2
 
@@ -185,6 +214,11 @@ function inlist() {
     echo "no"
 }
 
+function joinPath {
+    local IFS=":";
+    echo "$*";
+}
+
 function createDirectories() {
     for dir in ${SB_BASEDIRS}; do
 	printVerbose "Creating ${dir}"
@@ -192,39 +226,44 @@ function createDirectories() {
     done
 }
 
-function installExecs() {
-    for executable in ${SB_EXECS}; do
-	copyIfNeeded $(which ${executable}) ${SB_BASE}/bin/$(basename ${executable})
-    done
+function installPayload() {
 
-    # Symlink /bin/sh to /bin/bash
-    linkIfNeeded /bin/bash ${SB_BASE}/bin/sh
-}
+    # Install bash if there is none
+    if [ $(checkExists "bash") == "no" ]; then
+	copyIfNeeded $(which "bash") ${SB_BASE}/bin/bash
 
-function setupToybox() {
+	linkIfNeeded /bin/bash ${SB_BASE}/bin/sh
+    fi
 
-    # Install toybox programs as symlinks
-    local SB_TOYBOX=$(which toybox)
-    local SB_TOYBOX_PROGS=$( ${SB_TOYBOX} --long )
-    for toy in ${SB_TOYBOX_PROGS}; do
-	linkIfNeeded /bin/toybox ${SB_BASE}/${toy}
-    done
+    # Install busybox & toybox ONLY if there is not already a busybox
+    if [ $(checkExists "busybox") == "no" ]; then
 
-    # Install busybox programs as symlinks, where toybox has not
-    local SB_BUSYBOX=$(which busybox)
-    local SB_BUSYBOX_PROGS=$( ${SB_BUSYBOX} --list )
-    SB_TOYBOX_PROGS=$( ${SB_TOYBOX} )
+	copyIfNeeded $(which "busybox") ${SB_BASE}/bin/busybox
+	copyIfNeeded $(which "toybox") ${SB_BASE}/bin/toybox
 
-    for prog in ${SB_BUSYBOX_PROGS}; do
+	# Install toybox programs as symlinks
+	local SB_TOYBOX=$(which toybox)
+	local SB_TOYBOX_PROGS=$( ${SB_TOYBOX} --long )
+	for toy in ${SB_TOYBOX_PROGS}; do
+	    linkIfNeeded /bin/toybox ${SB_BASE}/${toy}
+	done
 
-	# Toybox installs things in smart places, here we
-	# only want to install busybox programs if they
-	# are not in the list of installed toybox programs.
-	#
-	if test $(inlist "${prog}" "${SB_TOYBOX_PROGS}") == "no"; then
-	    linkIfNeeded /bin/busybox ${SB_BASE}/bin/${prog}
-	fi
-    done
+	# Install busybox programs as symlinks, where toybox has not
+	local SB_BUSYBOX=$(which busybox)
+	local SB_BUSYBOX_PROGS=$( ${SB_BUSYBOX} --list )
+	SB_TOYBOX_PROGS=$( ${SB_TOYBOX} )
+
+	for prog in ${SB_BUSYBOX_PROGS}; do
+
+	    # Toybox installs things in smart places, here we
+	    # only want to install busybox programs if they
+	    # are not in the list of installed toybox programs.
+	    #
+	    if test $(inList "${prog}" "${SB_TOYBOX_PROGS}") == "no"; then
+		linkIfNeeded /bin/busybox ${SB_BASE}/bin/${prog}
+	    fi
+	done
+    fi
 }
 
 function mountDirectories() {
@@ -238,6 +277,8 @@ function mountDirectories() {
 
 	let i=i+1;
     done
+
+
 }
 
 function umountDirectories() {
@@ -246,6 +287,9 @@ function umountDirectories() {
 	printVerbose "Unmounting ${SB_BASE}/${mountdest}"
 	umount ${SB_BASE}/${mountdest}
     done
+
+    printVerbose "Removing ${SB_BIND_MOUNT_TMP}"
+    rm -rf ${SB_BIND_MOUNT_TMP}
 }
 
 function createBaseMeta() {
@@ -276,15 +320,18 @@ function launchChroot() {
 
     printVerbose "Running command in sandbox: ${SB_COMMAND[@]}"
 
+    ALL_PATHS=(${SB_BASE_PATH[@]} ${SB_TOOL_PATH[@]})
+    CHROOT_PATH=$(joinPath "${ALL_PATHS[@]}")
+
     #
     # This is for building host tools... we'll need a different config
     # once glibc is built and we want to link to it
     #
-    PATH=/usr/bin:/bin:/usr/sbin:/sbin:/tools/usr/distcc:/tools/usr/bin \
+    PATH=${CHROOT_PATH} \
 	CCWRAP_DYNAMIC_LINKER=${SB_DYNAMIC_LINKER} \
 	CCWRAP_TOPDIR=${SB_TOPDIR} \
 	CCWRAP_EXTRA_LIBDIRS=${SB_LIBDIRS} \
-	chroot ${SB_BASE} /bin/bash -c "${SB_COMMAND[@]}"
+	chroot ${SB_BASE} /bin/sh -c "${SB_COMMAND[@]}"
 
     # Capture the chroot exit status
     SB_EXITSTATUS=$?
@@ -305,14 +352,9 @@ createDirectories
 createBaseMeta
 
 #
-# Install statically linked executables
+# Install statically linked executables if need be
 #
-installExecs
-
-#
-# Install toybox/busybox programs as symlinks
-#
-setupToybox
+installPayload
 
 #
 # Bind mount some directories
