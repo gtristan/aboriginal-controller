@@ -3,8 +3,8 @@
 #
 WORKDIR=$(realpath ${SB_WORKDIR})
 PID_FILE=${WORKDIR}/aboriginal.pid
-PIPE_IN=${WORKDIR}/comm0
-PIPE_OUT=${WORKDIR}/comm1
+COMM_OUT=${WORKDIR}/comm0
+COMM_IN=${WORKDIR}/comm1
 IMAGE_FILE=${WORKDIR}/hdb.img
 DISTCC_LOG=${WORKDIR}/distccd.log
 QEMU_LOG=${WORKDIR}/qemu.log
