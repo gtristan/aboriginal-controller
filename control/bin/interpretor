@@ -4,11 +4,17 @@
 #
 BASE=/mnt
 SANDBOX=${BASE}/bin/sandbox
-SERIAL_PORT_IN="/dev/vport1p1"
-SERIAL_PORT_OUT="/dev/vport1p2"
+COMM_IN="/dev/vport1p1"
+COMM_OUT="/dev/vport1p2"
+SB_VERBOSE=true
 
 # Source the protocol definition
 . ${BASE}/bin/protocol
+. ${BASE}/bin/protocol-functions.sh
+
+# The command sequence we're gonna send,
+# need to declare the array in global scope
+SB_COMMAND_SEQUENCE=()
 
 #
 # Parsing state
@@ -35,14 +41,15 @@ function clearState() {
 
 function readMessage() {
 
-    while read -r word arg < ${SERIAL_PORT_IN}; do
-	# Hmmm, for some reason we dont get more than
-	# one or two lines from the serial port at a
-	# time unless we we pause between each line on
-	# the host side... Probably I just dont understand
-	# serial ports well enough
+    while true; do
+
+	# Synchronize communications with an ACK for every line
 	#
-	echo "Read: ${word} ${arg}";
+	read -r word arg < ${COMM_IN}
+	printVerbose "Read: ${word} ${arg}";
+
+	# Send the ACK right away
+	sendAck
 
 	case ${word} in
 
@@ -76,11 +83,6 @@ function readMessage() {
 
 	esac
 
-	# Synchronize communications with an ACK for every line
-	#
-	echo "Writing back ACK to ${SERIAL_PORT_OUT}"
-	echo "${SB_PROTO_ACK}" > ${SERIAL_PORT_OUT}
-
 	# Break the loop once we receive an "END", after
 	# writing the ACK back to the host.
 	#
@@ -94,6 +96,8 @@ function readMessage() {
 function runSandbox() {
 
     local sb_args="";
+    local sb_exit_status="0";
+    local status=0;
 
     if ! $sb_bootstrap; then
       sb_args=${sb_args}"--dynamic-linker /lib/ld.so ";
@@ -104,19 +108,29 @@ function runSandbox() {
     sb_args=${sb_args}"--directory ${SHARE}/${sb_sandbox}"
 
     # Mount the share for the duration of the command
-    echo "Mounting ${SHARE}"
+    printVerbose "Mounting ${SHARE}"
     mount -t 9p share ${SHARE}
 
     # Run the sandbox with the specified commands
-    echo "Running: ${SANDBOX} ${sb_args} ${sb_command[0]}"
+    printVerbose "Running: ${SANDBOX} ${sb_args} ${sb_command[0]}"
     ${SANDBOX} ${sb_args} "${sb_command[0]}"
+    sb_exit_status=$?
 
     # Umount it, only mounted while running commands
-    echo "Unmounting ${SHARE}"
+    printVerbose "Unmounting ${SHARE}"
     umount ${SHARE}
 
-    # Report the return value to be written back to the host
-    echo "$?" > ${SERIAL_PORT_OUT}
+    # Report the return value to be written back to the host,
+    # expect and ACK and do some retries here too.
+    COMMAND_SEQUENCE=("${sb_exit_status}")
+    status=$(sendSequence)
+    if [ "${status}" -ne 0 ]; then
+
+	# If we get here, better to just exit the script, this
+	# will cause the system to shut down and the emulator to quit
+	printStderr "We're totally screwed now, probably locked up"
+	exit 1
+    fi
 }
 
 function processMessage() {
@@ -136,7 +150,7 @@ function processMessage() {
 # the background.
 #
 if [ ! -z "${INFORM_READY}" ]; then
-    echo ${SB_PROTO_READY} > ${SERIAL_PORT_OUT}
+    echo ${SB_PROTO_READY} > ${COMM_OUT}
 fi
 
 #
