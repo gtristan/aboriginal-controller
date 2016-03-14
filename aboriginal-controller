@@ -5,19 +5,10 @@ SB_VERBOSE=false
 SB_QUIT=false
 SB_EXECUTE=false
 SB_BOOTSTRAP=false
+SB_ASSUME_RUNNING=false
 SB_DIRECTORY=
 SB_COMMAND=
 SB_EXITSTATUS=0
-
-# This is a timeout we wait between reading an ACK
-# and sending a message, we should not need this,
-# it possibly indicates a bug with qemu/virtio.
-SB_WAIT_SEND=0.3
-
-# Also same issue, in case that the wait is not enough
-# and we fail to get our ACK, we try the whole command
-# over again.
-SB_RETRIES=10
 
 # The command sequence we're gonna send
 SB_COMMAND_SEQUENCE=()
@@ -34,6 +25,7 @@ function usage () {
     echo "General Options:"
     echo "  -h --help                Display this help message and exit"
     echo "  -w --workdir <directory> Directory where emulator state is stored"
+    echo "  -a --assume-running      Dont check for the running pid, which is not set in interactive mode"
     echo "  -v --verbose             Be verbose"
     echo
     echo "Main control options:"
@@ -66,6 +58,10 @@ while : ; do
 	    SB_VERBOSE=true;
 	    shift ;;
 
+	-a|--assume-running)
+	    SB_ASSUME_RUNNING=true;
+	    shift ;;
+
 	-x|--execute)
 	    SB_EXECUTE=true;
 	    shift ;;
@@ -89,123 +85,71 @@ done
 
 SB_COMMAND=("$@")
 
+# Source the common protocol definition and work directory state
+#
+SB_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. ${SB_PATH}/aboriginal-state
+. ${SB_PATH}/control/bin/protocol
+. ${SB_PATH}/control/bin/protocol-functions.sh
+
 #####################################################
 #                   Utilities                       #
 #####################################################
-function printVerbose() {
-    if $SB_VERBOSE; then
-	echo $@ 1>&2;
-    fi
-}
-
-function sendAndWait() {
-    local sendData="$@"
-    local readAck="z"
-
-    sleep ${SB_WAIT_SEND}
-    printVerbose "Sending: ${sendData}"
-    echo ${sendData} > ${PIPE_IN};
-    printVerbose "Waiting for ACK"
-    read -t 5 -r readAck < ${PIPE_OUT};
-    printVerbose "Read ack: $readAck"
-
-    if [ "${readAck}" != "${SB_PROTO_ACK}" ]; then
-	echo "1"
-    else
-	echo "0"
-    fi
-}
-
 function handshake() {
     local tries=0
     local shook=false
     local readAck="z"
 
     printVerbose "Performing handshake"
-
     while [ "${tries}" -lt 3 ]; do
-	echo ${SB_PROTO_HANDSHAKE} > ${PIPE_IN};
-	sleep 0.5
-	read -t 5 -r readAck < ${PIPE_OUT};
-	if [ "${readAck}" == "${SB_PROTO_ACK}" ]; then
+
+	status=$(sendAndWait ${SB_PROTO_HANDSHAKE})
+	if [ "${status}" -eq 0 ]; then
 	  shook=true;
-	  break;
+	  break
 	fi
+	sleep ${SB_WAIT_SEND}
 
 	let tries=${tries}+1;
     done
 
     if ! $shook; then
-      echo "Unable to perform handshake"
-      exit 1
+	printStderr "Unable to perform handshake"
+	exit 1
     else
 	printVerbose "Successful handshake after ${tries} tries"
     fi
 }
 
-function sendSequence() {
-    local status=0;
-    local tries=0;
-
-    while [ "${tries}" -lt ${SB_RETRIES} ]; do
-
-	for comm in "${COMMAND_SEQUENCE[@]}"; do
-	    status=$(sendAndWait ${comm})
-
-	    if [ "${status}" != "0" ]; then
-		break
-	    fi
-	done
-
-	if [ "${status}" == "0" ]; then
-	    break
-	fi
-
-	let tries=${tries}+1;
-    done
-
-    # Finally give up
-    if [ "${status}" != "0" ]; then
-	echo "Failed to send message after ${tries} tries";
-	exit 1;
-    fi
-}
-
-
 #####################################################
 #                     Main                          #
 #####################################################
 if ! $SB_QUIT && ! $SB_EXECUTE; then
-  echo "Must specify either the --quit or --execute options"
-  echo
-  usage
-  exit 1;
+    printStderr "Must specify either the --quit or --execute options"
+    printStderr
+    usage
+    exit 1;
 fi
 
 if [ -z "${SB_WORKDIR}" ]; then
-  echo "Must specify the directory where runtime state is stored"
-  echo
-  usage
-  exit 1;
+    printStderr "Must specify the directory where runtime state is stored"
+    printStderr
+    usage
+    exit 1;
 elif [ ! -d ${SB_WORKDIR} ]; then
-  echo "The specified work directory '${SB_WORKDIR}' is not a directory"
-  echo
-  usage
-  exit 1;
+    printStderr "The specified work directory '${SB_WORKDIR}' is not a directory"
+    printStderr
+    usage
+    exit 1;
 fi
-
-# Source the common protocol definition and work directory state
-#
-SB_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-. ${SB_PATH}/control/bin/protocol
-. ${SB_PATH}/aboriginal-state
-
 
 # Check if we're running
 #
-if [ "$(isRunning)" == "0" ]; then
-  echo "Aboriginal sandbox for work directory ${SB_WORKDIR} is not running";
-  exit 1;
+if ! $SB_ASSUME_RUNNING; then
+    if [ "$(isRunning)" == "0" ]; then
+	printStderr "Aboriginal sandbox for work directory ${SB_WORKDIR} is not running";
+	exit 1;
+    fi
 fi
 
 # First perform a handshake, just in case we're out of sync
@@ -220,7 +164,11 @@ if $SB_QUIT; then
   COMMAND_SEQUENCE+=(${SB_PROTO_START})
   COMMAND_SEQUENCE+=(${SB_PROTO_EXIT})
   COMMAND_SEQUENCE+=(${SB_PROTO_END})
-  sendSequence
+  status=$(sendSequence)
+  if [ "${status}" -ne 0 ]; then
+      printStderr "Failed to instruct emulator to quit"
+      exit 1
+  fi
 
   # Currently no way to join the emulator process and wait,
   # just return immediately and expect the emulator to exit
@@ -235,10 +183,15 @@ else
     COMMAND_SEQUENCE+=(${SB_PROTO_BOOTSTRAP})
   fi
   COMMAND_SEQUENCE+=(${SB_PROTO_END})
-  sendSequence
+  status=$(sendSequence)
+  if [ "${status}" -ne 0 ]; then
+      printStderr "Failed to send commands to the emulator"
+      exit 1
+  fi
 
   printVerbose "Waiting for commands to complete"
-  read -r SB_EXITSTATUS < ${PIPE_OUT};
+  read -r SB_EXITSTATUS < ${COMM_IN};
+  echo "${SB_PROTO_ACK}" > ${COMM_OUT}
 
   printVerbose "Emulator reported exit status: ${SB_EXITSTATUS}"
   exit ${SB_EXITSTATUS}
