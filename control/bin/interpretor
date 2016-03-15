@@ -103,6 +103,7 @@ function runSandbox() {
       sb_args=${sb_args}"--dynamic-linker /lib/ld.so ";
       sb_args=${sb_args}"--topdir /usr ";
       sb_args=${sb_args}"--extra-libdirs /lib ";
+      sb_args=${sb_args}"--predef stdc-predef.h ";
     fi
 
     sb_args=${sb_args}"--directory ${SHARE}/${sb_sandbox}"
