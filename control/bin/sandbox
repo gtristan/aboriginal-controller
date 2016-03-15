@@ -5,6 +5,7 @@ SB_VERBOSE=
 SB_DYNAMIC_LINKER="/tools/usr/lib/ld-musl.so.0"
 SB_TOPDIR="/tools/usr"
 SB_LIBDIRS=
+SB_PREDEF=
 SB_COMMAND=
 SB_EXITSTATUS=0
 
@@ -62,6 +63,7 @@ function usage () {
     echo "  -l --dynamic-linker <path>     Path to the dynamic linker (ld.so)"
     echo "  -t --topdir         <path>     Base directory for base include/link paths"
     echo "  -e --extra-libdirs  <path>     A colon separated path of default library search paths"
+    echo "  -p --predef         <filename> An optional predef file for compiling against libc (e.g.: stdc-predef.h)"
     echo
 }
 
@@ -82,6 +84,10 @@ while : ; do
 
 	-e|--extra-libdirs)
 	    SB_LIBDIRS=${2};
+	    shift 2 ;;
+
+	-p|--predef)
+	    SB_PREDEF=${2};
 	    shift 2 ;;
 
 	-d|--directory)
@@ -323,15 +329,24 @@ function launchChroot() {
     ALL_PATHS=(${SB_BASE_PATH[@]} ${SB_TOOL_PATH[@]})
     CHROOT_PATH=$(joinPath "${ALL_PATHS[@]}")
 
-    #
-    # This is for building host tools... we'll need a different config
-    # once glibc is built and we want to link to it
-    #
-    PATH=${CHROOT_PATH} \
-	CCWRAP_DYNAMIC_LINKER=${SB_DYNAMIC_LINKER} \
-	CCWRAP_TOPDIR=${SB_TOPDIR} \
-	CCWRAP_EXTRA_LIBDIRS=${SB_LIBDIRS} \
-	chroot ${SB_BASE} /bin/bash -c "${SB_COMMAND[@]}"
+    if [ ! -z "${SB_PREDEF}" ]; then
+	export CCWRAP_PREDEF=${SB_PREDEF}
+    fi
+
+    if [ ! -z "${SB_DYNAMIC_LINKER}" ]; then
+	export CCWRAP_DYNAMIC_LINKER=${SB_DYNAMIC_LINKER}
+    fi
+
+    if [ ! -z "${SB_TOPDIR}" ]; then
+	export CCWRAP_TOPDIR=${SB_TOPDIR}
+    fi
+
+    if [ ! -z "${SB_LIBDIRS}" ]; then
+	export CCWRAP_EXTRA_LIBDIRS=${SB_LIBDIRS}
+    fi
+
+    # Launch the chroot with the compiler and path configured
+    PATH=${CHROOT_PATH} chroot ${SB_BASE} /bin/bash -c "${SB_COMMAND[@]}"
 
     # Capture the chroot exit status
     SB_EXITSTATUS=$?
