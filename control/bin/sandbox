@@ -352,6 +352,12 @@ function launchChroot() {
     SB_EXITSTATUS=$?
 }
 
+function ensureDevNull() {
+    if [ ! -e "${SB_BASE}/dev/null" ]; then
+	mknod -m 0666 "${SB_BASE}/dev/null" c 1 3
+    fi
+}
+
 #####################################################
 #                      Main                         #
 #####################################################
@@ -375,6 +381,11 @@ installPayload
 # Bind mount some directories
 #
 mountDirectories
+
+#
+# We must absolutely have a /dev/null
+#
+ensureDevNull
 
 #
 # Launch the chroot
