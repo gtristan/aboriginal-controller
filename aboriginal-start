@@ -35,20 +35,24 @@ while : ; do
 	    shift ;;
 
 	-d|--directory)
-	    SB_DIRECTORY=${2};
-	    shift 2 ;;
+	    shift;
+	    SB_DIRECTORY=${1};
+	    shift ;;
 
 	-w|--workdir)
-	    SB_WORKDIR=${2};
-	    shift 2 ;;
+	    shift;
+	    SB_WORKDIR=${1};
+	    shift ;;
 
 	-e|--emulator)
-	    SB_EMULATOR=${2};
-	    shift 2 ;;
+	    shift;
+	    SB_EMULATOR=${1};
+	    shift ;;
 
 	-c|--cpus)
-	    SB_CPUS=${2};
-	    shift 2 ;;
+	    shift;
+	    SB_CPUS=${1};
+	    shift ;;
 
 	-s|--silent)
 	    SB_SILENT=true;
